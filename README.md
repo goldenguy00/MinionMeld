@@ -1,9 +1,5 @@
-# R2Boilerplate
+# Minion Meld
 
-This repository contains a sample mod for Risk of Rain 2.
+It's pretty similar to DroneMeld but better. It won't crash your game!
 
-You can clone this repository, open the visual studio solution file and compile it immediately.
-
-This repository is meant to represent best practices for starting a simple mod.
-
-Once your mod get compiled, you can utilize the Thunderstore folder for later uploading it to https://thunderstore.io/c/riskofrain2/
+- https://thunderstore.io/package/ThinkInvis/Dronemeld/
