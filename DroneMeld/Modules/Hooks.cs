@@ -1,4 +1,8 @@
-﻿using MinionMeld.Components;
+﻿using System;
+using HarmonyLib;
+using MinionMeld.Components;
+using Mono.Cecil.Cil;
+using MonoMod.Cil;
 using R2API;
 using RoR2;
 using UnityEngine;
@@ -93,13 +97,23 @@ namespace MinionMeld.Modules
             if (MeldingTime.Apply(masterIdx, summonerBody.masterObjectId, out var newSummon))
             {
                 // turret time
-                var newBody = newSummon ? newSummon.GetBody() : null;
+                var newBody = newSummon.GetBody();
                 if (PluginConfig.teleturret.Value && newBody && newBody.TryGetComponent<TeleportingTurret>(out var teleTurret))
                 {
                     var newPos = MeldingTime.FindSpawnDestination(newBody, spawnReq.placementRule, spawnReq.rng);
                     if (newPos.HasValue)
                         teleTurret.RegisterLocation(newPos.Value);
                 }
+
+                spawnReq.onSpawnedServer?.Invoke(new SpawnCard.SpawnResult
+                {
+                    spawnedInstance = newSummon.gameObject,
+                    spawnRequest = spawnReq,
+                    position = newBody ? newBody.corePosition : summonerBody.corePosition,
+                    success = true,
+                    rotation = newBody ? newBody.transform.rotation : Quaternion.identity
+                });
+
                 return null;
             }
 
