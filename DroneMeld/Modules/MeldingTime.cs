@@ -5,7 +5,6 @@ using MinionMeld.Components;
 using RoR2;
 using RoR2.Navigation;
 using UnityEngine;
-using UnityEngine.Networking;
 
 namespace MinionMeld.Modules
 {
@@ -19,10 +18,13 @@ namespace MinionMeld.Modules
         }
 
         #region Apply
-        public static CharacterMaster ApplyPerPlayer(MasterCatalog.MasterIndex masterIdx, NetworkInstanceId summonerId)
+        public static CharacterMaster ApplyPerPlayer(MasterCatalog.MasterIndex masterIdx, CharacterMaster summonerMaster)
         {
             List<CharacterMaster> validTargets = [];
             var priority = PluginConfig.priorityOrder.Value;
+            var summonerId = summonerMaster.netId;
+            if (summonerMaster.minionOwnership.ownerMaster)
+                summonerId = summonerMaster.minionOwnership.ownerMaster.netId;
 
             var minionGroup = MinionOwnership.MinionGroup.FindGroup(summonerId);
             if (minionGroup != null)
@@ -93,16 +95,20 @@ namespace MinionMeld.Modules
 
         public static bool CanApply(MasterCatalog.MasterIndex masterIdx, TeamIndex summonerTeam, TeamIndex? teamIndexOverride)
         {
-            if (masterIdx == MasterCatalog.MasterIndex.none ||
-                PluginConfig.masterBlacklist.Contains(masterIdx))
-                return false;
-
-            return (teamIndexOverride.HasValue ? teamIndexOverride.Value : summonerTeam) == TeamIndex.Player;
+            return masterIdx != MasterCatalog.MasterIndex.none && (teamIndexOverride.HasValue ? teamIndexOverride.Value : summonerTeam) == TeamIndex.Player && !PluginConfig.masterBlacklist.Contains(masterIdx);
         }
 
-        public static bool Apply(MasterCatalog.MasterIndex masterIdx, NetworkInstanceId summonerId, out CharacterMaster newSummon)
+        public static bool CanApplyTurret(CharacterMaster master)
         {
-            newSummon = PluginConfig.perPlayer.Value ? ApplyPerPlayer(masterIdx, summonerId) : ApplyGlobal(masterIdx);
+            if (!PluginConfig.teleturret.Value || !master || master.teamIndex != TeamIndex.Player || master.masterIndex == MasterCatalog.MasterIndex.none)
+                return false;
+
+            return !PluginConfig.masterBlacklist.Contains(master.masterIndex) && !PluginConfig.turretBlacklist.Contains(master.masterIndex);
+        }
+
+        public static bool PerformMeld(MasterCatalog.MasterIndex masterIdx, CharacterMaster summonerMaster, out CharacterMaster newSummon)
+        {
+            newSummon = PluginConfig.perPlayer.Value ? ApplyPerPlayer(masterIdx, summonerMaster) : ApplyGlobal(masterIdx);
 
             if (newSummon)
             {
@@ -111,7 +117,7 @@ namespace MinionMeld.Modules
                 if (newSummon.TryGetComponent<MasterSuicideOnTimer>(out var component))
                 {
                     newSummon.gameObject.AddComponent<TimedMeldStack>().Activate(component.lifeTimer - component.timer);
-                    component.timer = 0f;
+                    MonoBehaviour.Destroy(component);
                 }
 
                 var itemCount = newSummon.inventory.GetItemCount(RoR2Content.Items.HealthDecay);
@@ -120,9 +126,10 @@ namespace MinionMeld.Modules
                     var body = newSummon.GetBody();
                     if (body && body.healthComponent)
                     {
+                        newSummon.gameObject.AddComponent<TimedMeldStack>().Activate(itemCount * body.healthComponent.combinedHealthFraction);
+
                         var stacks = 1 + newSummon.inventory.GetItemCount(MinionMeldPlugin.meldStackItem);
                         body.healthComponent.HealFraction(1f / stacks, default);
-                        newSummon.gameObject.AddComponent<TimedMeldStack>().Activate(itemCount * body.healthComponent.combinedHealthFraction);
                     }
                 }
             }
@@ -132,10 +139,9 @@ namespace MinionMeld.Modules
         #endregion
 
         #region TeleTurret
-        public static void TryAddTeleTurret(CharacterMaster newSummon)
+        public static void TryAddTeleTurret(CharacterBody body)
         {
-            var body = newSummon ? newSummon.GetBody() : null;
-            if (PluginConfig.teleturret.Value && body && !body.GetComponent<TeleportingTurret>() && !PluginConfig.turretBlacklist.Contains(newSummon.masterIndex))
+            if (PluginConfig.teleturret.Value && body && !body.GetComponent<TeleportingTurret>())
             {
                 if ((!body.characterMotor && !body.GetComponent<KinematicCharacterMotor>() && !body.GetComponent<RigidbodyMotor>()) || body.baseMoveSpeed <= 0f)
                 {
@@ -143,41 +149,42 @@ namespace MinionMeld.Modules
                 }
             }
         }
-        #endregion
 
         public static Vector3? FindSpawnDestination(CharacterBody characterBodyOrPrefabComponent, DirectorPlacementRule rule, Xoroshiro128Plus rng)
         {
-            if (rule == null || rule == default)
-                return null;
-
             Vector3? result = null;
             SpawnCard spawnCard = ScriptableObject.CreateInstance<SpawnCard>();
             spawnCard.hullSize = characterBodyOrPrefabComponent.hullClassification;
             spawnCard.nodeGraphType = MapNodeGroup.GraphType.Ground;
             spawnCard.prefab = LegacyResourcesAPI.Load<GameObject>("SpawnCards/HelperPrefab");
 
-            var gameObject = DirectorCore.instance.TrySpawnObject(new DirectorSpawnRequest(spawnCard, rule, rng));
+            var request = new DirectorSpawnRequest(spawnCard, rule, rng);
+            var gameObject = DirectorCore.instance.TrySpawnObject(request);
 
             if (!gameObject)
             {
-                rule.placementMode = DirectorPlacementRule.PlacementMode.NearestNode;
-                gameObject = DirectorCore.instance.TrySpawnObject(new DirectorSpawnRequest(spawnCard, rule, rng));
+                if (request.placementRule.placementMode < DirectorPlacementRule.PlacementMode.ApproximateSimple)
+                {
+                    request.placementRule.placementMode = DirectorPlacementRule.PlacementMode.ApproximateSimple;
+                    gameObject = DirectorCore.instance.TrySpawnObject(request);
+                }
 
                 if (!gameObject)
                 {
-                    rule.placementMode = DirectorPlacementRule.PlacementMode.RandomNormalized;
-                    gameObject = DirectorCore.instance.TrySpawnObject(new DirectorSpawnRequest(spawnCard, rule, rng));
+                    request.placementRule.placementMode = DirectorPlacementRule.PlacementMode.RandomNormalized;
+                    gameObject = DirectorCore.instance.TrySpawnObject(request);
                 }
             }
 
             if (gameObject)
             {
                 result = gameObject.transform.position;
-                Object.Destroy(gameObject);
+                GameObject.Destroy(gameObject);
             }
 
-            Object.Destroy(spawnCard);
+            ScriptableObject.Destroy(spawnCard);
             return result;
         }
+        #endregion
     }
 }

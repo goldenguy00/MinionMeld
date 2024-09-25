@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using UnityEngine.Networking;
 using UnityEngine;
 using RoR2;
 using MinionMeld.Modules;
@@ -21,9 +20,9 @@ namespace MinionMeld.Components
         private void OnEnable()
         {
             instancesList.Add(this);
-            this.storedNodes.Add(this.transform.position);
-            this.currentNode = this.storedNodes[0];
             this.body = this.GetComponent<CharacterBody>();
+            this.storedNodes.Add(this.body.footPosition);
+            this.currentNode = this.body.footPosition;
         }
 
         private void OnDisable()
@@ -73,9 +72,9 @@ namespace MinionMeld.Components
             var ownerPos = this.ownerBody.transform.position;
             var distance = (closestNode - ownerPos).sqrMagnitude;
 
-            if (distance > 40000)
+            if (distance > PluginConfig.minionLeashRange.Value * PluginConfig.minionLeashRange.Value)
             {
-                var newNode = TeleportHelper.FindSafeTeleportDestination(ownerPos, this.body, RoR2Application.rng);
+                var newNode = MeldingTime.FindSpawnDestination(body, new DirectorPlacementRule() { position = ownerPos, placementMode = DirectorPlacementRule.PlacementMode.Approximate }, RoR2Application.rng);
 
                 if (newNode.HasValue) RegisterLocation(newNode.Value);
                 else Log.Error("Teleporting turret was unable to create a valid node");
@@ -94,6 +93,7 @@ namespace MinionMeld.Components
             if (this.currentNode != closestNode)
             {
                 TeleportHelper.TeleportGameObject(this.gameObject, closestNode);
+                this.transform.rotation = Quaternion.identity;
                 this.currentNode = closestNode;
             }
         }

@@ -1,8 +1,4 @@
-﻿using System;
-using HarmonyLib;
-using MinionMeld.Components;
-using Mono.Cecil.Cil;
-using MonoMod.Cil;
+﻿using MinionMeld.Components;
 using R2API;
 using RoR2;
 using UnityEngine;
@@ -12,39 +8,27 @@ namespace MinionMeld.Modules
 {
     public class Hooks
     {
+        private const string SPAWN_STRING = "{0} | Spawning Meldable Minion: {1}";
+        private const string MELD_STRING = "{0} | Performing Minion Meld: {1}";
+
         public static Hooks Instance { get; private set; }
 
         public static void Init() => Instance ??= new Hooks();
-
         private Hooks()
         {
             // hooks
             On.RoR2.CharacterBody.GetDisplayName += CharacterBody_GetDisplayName;
-            On.EntityStates.Drone.DeathState.OnImpactServer += DeathState_OnImpactServer;
-            On.RoR2.HoldoutZoneController.OnEnable += HoldoutZoneController_OnEnable;
-            On.RoR2.ScriptedCombatEncounter.BeginEncounter += ScriptedCombatEncounter_BeginEncounter;
-            On.RoR2.CharacterMaster.Respawn += CharacterMaster_Respawn;
 
             //events
-            //CharacterBody.onBodyStartGlobal += CharacterBody_onBodyStartGlobal;
-            //On.RoR2.CharacterMaster.OnItemAddedClient += CharacterMaster_OnItemAddedClient;
+            CharacterBody.onBodyStartGlobal += CharacterBody_ResizeBody;
+            CharacterBody.onBodyInventoryChangedGlobal += CharacterBody_ResizeBody;
             RecalculateStatsAPI.GetStatCoefficients += RecalculateStatsAPI_GetStatCoefficients;
-
 
             On.RoR2.MasterSummon.Perform += MasterSummon_Perform;
             On.RoR2.DirectorCore.TrySpawnObject += DirectorCore_TrySpawnObject;
         }
 
-        private CharacterBody CharacterMaster_Respawn(On.RoR2.CharacterMaster.orig_Respawn orig, CharacterMaster self, Vector3 footPosition, Quaternion rotation, bool wasRevivedMidStage)
-        {
-            var body = orig(self, footPosition, rotation, wasRevivedMidStage);
-            if (!PluginConfig.masterBlacklist.Contains(self.masterIndex))
-                MeldingTime.TryAddTeleTurret(self);
-
-            return body;
-        }
-
-        private CharacterMaster MasterSummon_Perform(On.RoR2.MasterSummon.orig_Perform orig, MasterSummon self)
+        private static CharacterMaster MasterSummon_Perform(On.RoR2.MasterSummon.orig_Perform orig, MasterSummon self)
         {
             if (!(self.masterPrefab && self.summonerBodyObject && self.summonerBodyObject.TryGetComponent<CharacterBody>(out var summonerBody) && summonerBody.master))
                 return orig(self);
@@ -53,40 +37,48 @@ namespace MinionMeld.Modules
             if (!MeldingTime.CanApply(masterIdx, summonerBody.teamComponent.teamIndex, self.teamIndexOverride))
                 return orig(self);
 
-            if (MeldingTime.Apply(masterIdx, summonerBody.masterObjectId, out var newSummon))
+            if (MeldingTime.PerformMeld(masterIdx, summonerBody.master, out var newSummon))
             {
                 // turret time
-                var newBody = newSummon ? newSummon.GetBody() : null;
+                if (PluginConfig.teleturret.Value && newSummon.hasBody && newSummon.bodyInstanceObject.TryGetComponent<TeleportingTurret>(out var teleTurret))
+                    teleTurret.RegisterLocation(self.position);
+                else if (PluginConfig.respawnSummon.Value)
+                    TeleportHelper.TeleportBody(newSummon.GetBody(), self.position);
 
                 var stacks = newSummon.inventory.GetItemCount(MinionMeldPlugin.meldStackItem);
+                newSummon.inventory.CleanInventory();
+                newSummon.inventory.GiveItem(MinionMeldPlugin.meldStackItem, stacks);
+
                 if (self.inventoryToCopy)
-                {
-                    newSummon.inventory.CopyEquipmentFrom(self.inventoryToCopy);
                     newSummon.inventory.CopyItemsFrom(self.inventoryToCopy, self.inventoryItemCopyFilter ?? Inventory.defaultItemCopyFilterDelegate);
-                }
+
                 self.inventorySetupCallback?.SetupSummonedInventory(self, newSummon.inventory);
+                self.preSpawnSetupCallback?.Invoke(newSummon);
 
                 var newStacks = newSummon.inventory.GetItemCount(MinionMeldPlugin.meldStackItem);
                 if (newStacks != stacks)
                     newSummon.inventory.GiveItem(MinionMeldPlugin.meldStackItem, stacks - newStacks);
 
-                if (PluginConfig.teleturret.Value && newBody && newBody.TryGetComponent<TeleportingTurret>(out var teleTurret))
-                {
-                    teleTurret.RegisterLocation(self.position);
-                }
-                return null;
+                if (PluginConfig.printMasterNames.Value)
+                    Log.Info(string.Format(MELD_STRING, nameof(MasterSummon), newSummon?.name));
+                
+                return newSummon;
             }
 
             // first guy/dont meld yet but is valid target
             newSummon = orig(self);
-            MeldingTime.TryAddTeleTurret(newSummon);
+            if (MeldingTime.CanApplyTurret(newSummon))
+                MeldingTime.TryAddTeleTurret(newSummon.GetBody());
+
+            if (PluginConfig.printMasterNames.Value && newSummon)
+                Log.Info(string.Format(SPAWN_STRING, nameof(MasterSummon), newSummon?.name ?? "NULL"));
 
             return newSummon;
         }
 
-        private GameObject DirectorCore_TrySpawnObject(On.RoR2.DirectorCore.orig_TrySpawnObject orig, DirectorCore self, DirectorSpawnRequest spawnReq)
+        private static GameObject DirectorCore_TrySpawnObject(On.RoR2.DirectorCore.orig_TrySpawnObject orig, DirectorCore self, DirectorSpawnRequest spawnReq)
         {
-            if (!(spawnReq != null && spawnReq.spawnCard && spawnReq.spawnCard.prefab && spawnReq.summonerBodyObject &&
+            if (!(spawnReq?.spawnCard && spawnReq.spawnCard.prefab && spawnReq.summonerBodyObject && spawnReq.placementRule != null &&
                 spawnReq.summonerBodyObject.TryGetComponent<CharacterBody>(out var summonerBody) && summonerBody.master))
                 return orig(self, spawnReq);
 
@@ -94,61 +86,78 @@ namespace MinionMeld.Modules
             if (!MeldingTime.CanApply(masterIdx, summonerBody.teamComponent.teamIndex, spawnReq.teamIndexOverride))
                 return orig(self, spawnReq);
 
-            if (MeldingTime.Apply(masterIdx, summonerBody.masterObjectId, out var newSummon))
+            if (MeldingTime.PerformMeld(masterIdx, summonerBody.master, out var newSummon))
             {
                 // turret time
                 var newBody = newSummon.GetBody();
-                if (PluginConfig.teleturret.Value && newBody && newBody.TryGetComponent<TeleportingTurret>(out var teleTurret))
+                if (newBody)
                 {
                     var newPos = MeldingTime.FindSpawnDestination(newBody, spawnReq.placementRule, spawnReq.rng);
                     if (newPos.HasValue)
-                        teleTurret.RegisterLocation(newPos.Value);
+                    {
+                        if (PluginConfig.teleturret.Value && newBody.TryGetComponent<TeleportingTurret>(out var teleTurret))
+                            teleTurret.RegisterLocation(newPos.Value);
+                        else if (PluginConfig.respawnSummon.Value)
+                            TeleportHelper.TeleportBody(newBody, newPos.Value);
+                    }
+
+                    var stacks = newSummon.inventory.GetItemCount(MinionMeldPlugin.meldStackItem);
+                    newSummon.inventory.CleanInventory();
+                    newSummon.inventory.GiveItem(MinionMeldPlugin.meldStackItem, stacks);
+
+                    spawnReq.onSpawnedServer?.Invoke(new SpawnCard.SpawnResult
+                    {
+                        spawnedInstance = newSummon.gameObject,
+                        spawnRequest = spawnReq,
+                        position = newBody.footPosition,
+                        success = true,
+                        rotation = newBody.transform.rotation
+                    });
+
+                    var newStacks = newSummon.inventory.GetItemCount(MinionMeldPlugin.meldStackItem);
+                    if (newStacks != stacks)
+                        newSummon.inventory.GiveItem(MinionMeldPlugin.meldStackItem, stacks - newStacks);
                 }
 
-                spawnReq.onSpawnedServer?.Invoke(new SpawnCard.SpawnResult
-                {
-                    spawnedInstance = newSummon.gameObject,
-                    spawnRequest = spawnReq,
-                    position = newBody ? newBody.corePosition : summonerBody.corePosition,
-                    success = true,
-                    rotation = newBody ? newBody.transform.rotation : Quaternion.identity
-                });
+                if (PluginConfig.printMasterNames.Value)
+                    Log.Info(string.Format(MELD_STRING, nameof(DirectorCore), newSummon.gameObject.name));
 
-                return null;
+                return newSummon.gameObject;
             }
 
             // first guy/dont meld yet but is valid target
             var newSummonObj = orig(self, spawnReq);
-            MeldingTime.TryAddTeleTurret(newSummonObj ? newSummonObj.GetComponent<CharacterMaster>() : null);
+
+            newSummon = newSummonObj ? newSummonObj.GetComponent<CharacterMaster>() : null;
+            if (MeldingTime.CanApplyTurret(newSummon))
+                MeldingTime.TryAddTeleTurret(newSummon.GetBody());
+
+            if (PluginConfig.printMasterNames.Value && newSummonObj)
+                Log.Info(string.Format(SPAWN_STRING, nameof(DirectorCore), newSummonObj?.name ?? "NULL"));
 
             return newSummonObj;
         }
 
-        private void HoldoutZoneController_OnEnable(On.RoR2.HoldoutZoneController.orig_OnEnable orig, HoldoutZoneController self)
+        private static void CharacterBody_ResizeBody(CharacterBody body)
         {
-            orig(self);
-
-            if (NetworkServer.active)
+            if (PluginConfig.vfxResize.Value > 0 && NetworkClient.active && body && body.inventory)
             {
-                foreach (var drone in TeleportingTurret.instancesList)
+                var itemCount = body.inventory.GetItemCount(MinionMeldPlugin.meldStackItem);
+                if (itemCount > 0 && body.modelLocator && body.modelLocator.modelTransform)
                 {
-                    drone.CreateTeleportNode(self.transform.position);
+                    var prefabBody = BodyCatalog.GetBodyPrefab(body.bodyIndex);
+                    var prefabModelLoc = prefabBody ? prefabBody.GetComponent<ModelLocator>() : null;
+                    if (prefabModelLoc && prefabModelLoc.modelTransform)
+                    {
+                        var initialSize = prefabModelLoc.modelTransform.localScale;
+                        var sizePerStack = itemCount * (PluginConfig.vfxResize.Value * 0.01f);
+                        body.modelLocator.modelTransform.localScale = initialSize + (initialSize * sizePerStack);
+
+                    }
                 }
             }
         }
 
-        private void ScriptedCombatEncounter_BeginEncounter(On.RoR2.ScriptedCombatEncounter.orig_BeginEncounter orig, ScriptedCombatEncounter self)
-        {
-            orig(self);
-
-            if (NetworkServer.active)
-            {
-                foreach (var drone in TeleportingTurret.instancesList)
-                {
-                    drone.CreateTeleportNode(self.transform.position);
-                }
-            }
-        }
         private string CharacterBody_GetDisplayName(On.RoR2.CharacterBody.orig_GetDisplayName orig, CharacterBody self)
         {
             var text = orig.Invoke(self);
@@ -159,17 +168,6 @@ namespace MinionMeld.Modules
                     return $"{text} <style=cStack>x{itemCount + 1}</style>";
             }
             return text;
-        }
-
-        private void DeathState_OnImpactServer(On.EntityStates.Drone.DeathState.orig_OnImpactServer orig, EntityStates.Drone.DeathState self, Vector3 contactPoint)
-        {
-            var num = 0;
-            if (self.characterBody && self.characterBody.master && self.characterBody.master.inventory)
-                num = self.characterBody.master.inventory.GetItemCount(MinionMeldPlugin.meldStackItem);
-
-            orig(self, contactPoint);
-            for (var i = 0; i < num; i++)
-                orig(self, contactPoint);
         }
 
         private void RecalculateStatsAPI_GetStatCoefficients(CharacterBody sender, RecalculateStatsAPI.StatHookEventArgs args)

@@ -1,9 +1,10 @@
 ﻿using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using BepInEx.Configuration;
+using MinionMeld.Modules;
 using RoR2;
 
-namespace MinionMeld.Modules
+namespace MinionMeld
 {
     public static class PluginConfig
     {
@@ -12,7 +13,9 @@ namespace MinionMeld.Modules
         // general
         public static ConfigEntry<bool> perPlayer;
         public static ConfigEntry<bool> teleturret;
+        public static ConfigEntry<bool> respawnSummon;
         public static ConfigEntry<int> maxDronesPerType;
+        public static ConfigEntry<int> minionLeashRange;
         public static ConfigEntry<MeldingTime.DronemeldPriorityOrder> priorityOrder;
 
         // stats
@@ -25,30 +28,42 @@ namespace MinionMeld.Modules
         //  blacklist
         public static ConfigEntry<string> blacklistOption;
         public static ConfigEntry<string> blacklistOption2;
+        public static ConfigEntry<bool> printMasterNames;
         public static readonly HashSet<MasterCatalog.MasterIndex> masterBlacklist = [];
         public static readonly HashSet<MasterCatalog.MasterIndex> turretBlacklist = [];
-        private static void RebuildBlacklist(HashSet<MasterCatalog.MasterIndex> list, ConfigEntry<string> option)
+        public const string permaBlackList = "DevotedLemurianMaster,DevotedLemurianBruiserMaster,NemMercCloneMaster,";
+
+        private static void RebuildBlacklist(HashSet<MasterCatalog.MasterIndex> list, string option)
         {
             list.Clear();
-            if (!string.IsNullOrWhiteSpace(option.Value))
+            if (!string.IsNullOrWhiteSpace(option))
             {
-                var split = option.Value.Split(',');
-                for (int i = 0; i < split.Length; i++)
-                {
+                var split = option.Split(',');
+                for (var i = 0; i < split.Length; i++)
                     if (!string.IsNullOrWhiteSpace(split[i]))
                     {
                         var name = split[i].Replace(" ", string.Empty).Replace("(Clone)", string.Empty);
                         var idx = MasterCatalog.FindMasterIndex(name);
+                        if (idx == MasterCatalog.MasterIndex.none)
+                            idx = MasterCatalog.FindMasterIndex(name + "Master");
+
                         if (idx != MasterCatalog.MasterIndex.none)
                             list.Add(idx);
                     }
-                }
             }
         }
+
         public static void Init(ConfigFile cfg)
         {
-            string GENERAL = "General", STATS = "Stats", LIST = "WhiteList";
+            string GENERAL = "General", STATS = "Stats", LIST = "BlackList";
             myConfig = cfg;
+
+            BindOption(GENERAL,
+                "!!INFO!!",
+                true,
+                "The MinionMeld v1.1.0 patch fixed some issues with the plugin metadata using the wrong name." +
+                "\r\n\t- --**This causes the config file to get reset**-- but it won't delete the old one." +
+                "\r\n\t- The old cfg file is called DroneMeld, and new file is called MinionMeld if you have settings you'd like to transfer.");
 
             perPlayer = BindOption(GENERAL,
                 "Limit Drones Per Player",
@@ -60,11 +75,22 @@ namespace MinionMeld.Modules
                 true,
                 "Turrets, Squids, etc (anything immobile) remember their previous spawn locations and follow when you start a scripted combat event (teleporter, mithrix etc)");
 
+            respawnSummon = BindOption(GENERAL,
+                "Spawn In New Location",
+                true,
+                "Summoned allies will 'respawn' in the location that that they are summoned.");
+
             maxDronesPerType = BindOptionSlider(GENERAL,
-                "Max Drones Per Type",
+                "Max Minions Per Type",
                 1,
-                "Max Number of Drones you (or your team) can control of that type before melding is applied.",
+                "Max Number of Minions you (or your team) can control of that type before melding is applied.",
                 1, 20);
+
+            minionLeashRange = BindOptionSlider(GENERAL,
+                "Minion Leash Range",
+                200,
+                "Max distance a minion should be from their owner before teleporting. Applies to turrets.",
+                50, 1000);
 
             priorityOrder = BindOption(GENERAL,
                 "Selection Priority",
@@ -98,28 +124,33 @@ namespace MinionMeld.Modules
 
             vfxResize = BindOptionSlider(STATS,
                 "Size Multiplier",
-                0,
-                "** DOESNT WORK ** UNDER CONSTRUCTION ** I HATE NETWORKING **",
+                20,
+                "Visual size increase per meld, in percent. Stacks additively.",
                 0, 200);
 
             blacklistOption = BindOption(LIST,
                 "Blacklist",
-                "DevotedLemurianMaster,DevotedLemurianBruiserMaster,EquipmentDroneMaster,EngiTurretMaster,EngiBeamTurretMaster",
-                "Put the broken shit in here, or just things you want duplicates of. For devotion, download LemurFusion.\r\n" +
-                "To find these, open the console (Ctrl Alt ~), then type list_ai");
+                "EngiTurretMaster,EngiWalkerTurretMaster,GhoulMaster,TombstoneMaster",
+                "Put the broken shit in here, or just things you want duplicates of. For Devotion Artifact, download LemurFusion.\r\n" +
+                "To find these, download the DebugToolKit mod, open the console (Ctrl Alt ~), then type list_ai or enable the print option below.");
 
             blacklistOption2 = BindOption(LIST,
                 "Blacklist Teleporting Turret", "",
                 "Makes teleporting turret component unable to be applied to these guys. Typically applied to characters without the ability to move on their own.");
 
+            printMasterNames = BindOption(LIST,
+                "Print Master Names To Console",
+                true,
+                "Prints the name to the console (Ctrl Alt ~) when preforming a successful meld. Helpful for setting up the blacklist.");
+
             On.RoR2.MasterCatalog.Init += (orig) =>
             {
                 orig();
 
-                RebuildBlacklist(masterBlacklist, blacklistOption);
-                blacklistOption.SettingChanged += (_, _) => RebuildBlacklist(masterBlacklist, blacklistOption);
-                RebuildBlacklist(turretBlacklist, blacklistOption2);
-                blacklistOption2.SettingChanged += (_, _) => RebuildBlacklist(turretBlacklist, blacklistOption2);
+                RebuildBlacklist(masterBlacklist, permaBlackList + blacklistOption.Value);
+                blacklistOption.SettingChanged += (_, _) => RebuildBlacklist(masterBlacklist, permaBlackList + blacklistOption.Value);
+                RebuildBlacklist(turretBlacklist, blacklistOption2.Value);
+                blacklistOption2.SettingChanged += (_, _) => RebuildBlacklist(turretBlacklist, blacklistOption2.Value);
             };
         }
 
@@ -136,7 +167,7 @@ namespace MinionMeld.Modules
 
             var configEntry = myConfig.Bind(section, name, defaultValue, description);
 
-            if (MinionMeldPlugin.rooInstalled)
+            if (MinionMeldPlugin.RooInstalled)
                 TryRegisterOption(configEntry, restartRequired);
 
             return configEntry;
@@ -155,7 +186,7 @@ namespace MinionMeld.Modules
 
             var configEntry = myConfig.Bind(section, name, defaultValue, description);
 
-            if (MinionMeldPlugin.rooInstalled)
+            if (MinionMeldPlugin.RooInstalled)
                 TryRegisterOptionSlider(configEntry, min, max, restartRequired);
 
             return configEntry;
@@ -183,7 +214,7 @@ namespace MinionMeld.Modules
                 {
                     min = 0,
                     max = 20,
-                    formatString = "{0:0.00}",
+                    FormatString = "{0:0.00}",
                     restartRequired = restartRequired
                 }));
                 return;
@@ -230,7 +261,7 @@ namespace MinionMeld.Modules
                 {
                     min = min,
                     max = max,
-                    formatString = "{0:0.00}",
+                    FormatString = "{0:0.00}",
                     restartRequired = restartRequired
                 }));
         }

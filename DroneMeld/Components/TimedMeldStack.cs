@@ -30,6 +30,11 @@ namespace MinionMeld.Components
                 if (cm && cm.inventory)
                     cm.inventory.RemoveItem(MinionMeldPlugin.meldStackItem);
 
+                if (this.TryGetComponent<Deployable>(out var deployable))
+                {
+                    deployable.OnDestroy();
+                    MonoBehaviour.Destroy(deployable);
+                }
                 Destroy(this);
             }
         }
