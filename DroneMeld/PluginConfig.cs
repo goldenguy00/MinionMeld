@@ -15,6 +15,7 @@ namespace MinionMeld
         public static ConfigEntry<bool> teleturret;
         public static ConfigEntry<bool> respawnSummon;
         public static ConfigEntry<int> maxDronesPerType;
+        public static ConfigEntry<bool> enableTurretLeash;
         public static ConfigEntry<int> minionLeashRange;
         public static ConfigEntry<MeldingTime.DronemeldPriorityOrder> priorityOrder;
 
@@ -85,6 +86,11 @@ namespace MinionMeld
                 1,
                 "Max Number of Minions you (or your team) can control of that type before melding is applied.",
                 1, 20);
+
+            enableTurretLeash = BindOption(GENERAL,
+                "Enable Turret Leash",
+                true,
+                "Allows turrets to teleport to their owner when too far.");
 
             minionLeashRange = BindOptionSlider(GENERAL,
                 "Minion Leash Range",

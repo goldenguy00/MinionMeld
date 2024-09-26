@@ -60,18 +60,22 @@ namespace MinionMeld.Modules
                     newSummon.inventory.GiveItem(MinionMeldPlugin.meldStackItem, stacks - newStacks);
 
                 if (PluginConfig.printMasterNames.Value)
-                    Log.Info(string.Format(MELD_STRING, nameof(MasterSummon), newSummon?.name));
+                    Log.Info(string.Format(MELD_STRING, nameof(MasterSummon), newSummon.name));
                 
                 return newSummon;
             }
 
             // first guy/dont meld yet but is valid target
             newSummon = orig(self);
-            if (MeldingTime.CanApplyTurret(newSummon))
-                MeldingTime.TryAddTeleTurret(newSummon.GetBody());
 
-            if (PluginConfig.printMasterNames.Value && newSummon)
-                Log.Info(string.Format(SPAWN_STRING, nameof(MasterSummon), newSummon?.name ?? "NULL"));
+            if (newSummon)
+            {
+                if (MeldingTime.CanApplyTurret(newSummon))
+                    MeldingTime.TryAddTeleTurret(newSummon.GetBody());
+
+                if (PluginConfig.printMasterNames.Value)
+                    Log.Info(string.Format(SPAWN_STRING, nameof(MasterSummon), newSummon.name));
+            }
 
             return newSummon;
         }
@@ -120,7 +124,7 @@ namespace MinionMeld.Modules
                 }
 
                 if (PluginConfig.printMasterNames.Value)
-                    Log.Info(string.Format(MELD_STRING, nameof(DirectorCore), newSummon.gameObject.name));
+                    Log.Info(string.Format(MELD_STRING, nameof(DirectorCore), newSummon.name));
 
                 return newSummon.gameObject;
             }
@@ -128,12 +132,15 @@ namespace MinionMeld.Modules
             // first guy/dont meld yet but is valid target
             var newSummonObj = orig(self, spawnReq);
 
-            newSummon = newSummonObj ? newSummonObj.GetComponent<CharacterMaster>() : null;
-            if (MeldingTime.CanApplyTurret(newSummon))
-                MeldingTime.TryAddTeleTurret(newSummon.GetBody());
+            if (newSummonObj)
+            {
+                newSummon = newSummonObj.GetComponent<CharacterMaster>();
+                if (MeldingTime.CanApplyTurret(newSummon))
+                    MeldingTime.TryAddTeleTurret(newSummon.GetBody());
 
-            if (PluginConfig.printMasterNames.Value && newSummonObj)
-                Log.Info(string.Format(SPAWN_STRING, nameof(DirectorCore), newSummonObj?.name ?? "NULL"));
+                if (PluginConfig.printMasterNames.Value)
+                    Log.Info(string.Format(SPAWN_STRING, nameof(DirectorCore), newSummonObj.name));
+            }
 
             return newSummonObj;
         }
@@ -161,9 +168,9 @@ namespace MinionMeld.Modules
         private string CharacterBody_GetDisplayName(On.RoR2.CharacterBody.orig_GetDisplayName orig, CharacterBody self)
         {
             var text = orig.Invoke(self);
-            if (self && self.master && self.master.inventory)
+            if (self.inventory)
             {
-                var itemCount = self.master.inventory.GetItemCount(MinionMeldPlugin.meldStackItem);
+                var itemCount = self.inventory.GetItemCount(MinionMeldPlugin.meldStackItem);
                 if (itemCount > 0)
                     return $"{text} <style=cStack>x{itemCount + 1}</style>";
             }
@@ -180,7 +187,7 @@ namespace MinionMeld.Modules
                     args.baseHealthAdd += (sender.baseMaxHealth + (sender.levelMaxHealth * sender.level)) * itemCount * PluginConfig.statMultHealth.Value * 0.01f;
                     args.baseDamageAdd += (sender.baseDamage + (sender.levelDamage * sender.level)) * itemCount * PluginConfig.statMultDamage.Value * 0.01f;
                     args.baseAttackSpeedAdd += (sender.baseAttackSpeed + (sender.levelAttackSpeed * sender.level)) * itemCount * PluginConfig.statMultAttackSpeed.Value * 0.01f;
-                    args.cooldownMultAdd += itemCount * PluginConfig.statMultCDR.Value * 0.01f;
+                    args.cooldownMultAdd -= Util.ConvertAmplificationPercentageIntoReductionNormalized(itemCount * PluginConfig.statMultCDR.Value * 0.01f);
                 }
             }
         }

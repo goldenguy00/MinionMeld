@@ -45,7 +45,7 @@ namespace MinionMeld.Components
             if (this.teleportAttemptTimer > 0f)
                 return;
 
-            teleportAttemptTimer = 1f;
+            teleportAttemptTimer = 2f;
             CheckNodesForTeleport();
         }
         #endregion
@@ -72,12 +72,12 @@ namespace MinionMeld.Components
             var ownerPos = this.ownerBody.transform.position;
             var distance = (closestNode - ownerPos).sqrMagnitude;
 
-            if (distance > PluginConfig.minionLeashRange.Value * PluginConfig.minionLeashRange.Value)
+            if (PluginConfig.enableTurretLeash.Value && distance > PluginConfig.minionLeashRange.Value * PluginConfig.minionLeashRange.Value)
             {
                 var newNode = MeldingTime.FindSpawnDestination(body, new DirectorPlacementRule() { position = ownerPos, placementMode = DirectorPlacementRule.PlacementMode.Approximate }, RoR2Application.rng);
 
-                if (newNode.HasValue) RegisterLocation(newNode.Value);
-                else Log.Error("Teleporting turret was unable to create a valid node");
+                if (newNode.HasValue)
+                    RegisterLocation(newNode.Value);
             }
 
             foreach (var loc in storedNodes)
@@ -125,23 +125,26 @@ namespace MinionMeld.Components
             }
 
             Vector3? target = null;
+            var placementRule = new DirectorPlacementRule() 
+            { 
+                position = closest,
+                placementMode = DirectorPlacementRule.PlacementMode.Approximate
+            };
+
             if (closest != this.currentNode)
-            {
-                target = MeldingTime.FindSpawnDestination(body, new DirectorPlacementRule() { position = closest, placementMode = DirectorPlacementRule.PlacementMode.Approximate }, RoR2Application.rng);
-            }
+                target = MeldingTime.FindSpawnDestination(body, placementRule, RoR2Application.rng);
+
             // fallback to creating a node for the destination
+            placementRule.position = destination;
             if (!target.HasValue)
-            {
-                target = MeldingTime.FindSpawnDestination(body, new DirectorPlacementRule() { position = destination, placementMode = DirectorPlacementRule.PlacementMode.Approximate }, RoR2Application.rng);
-            }
+                target = MeldingTime.FindSpawnDestination(body, placementRule, RoR2Application.rng);
 
             if (target.HasValue)
-            {
                 RegisterLocation(target.Value);
-            }
             else
             {
-                Log.Error("Failed to create turret teleport node for " + this.body.name);
+                Log.Message("Failed to create turret teleport node for " + this.body.name);
+                this.teleportAttemptTimer = 10f;
             }
         }
     }

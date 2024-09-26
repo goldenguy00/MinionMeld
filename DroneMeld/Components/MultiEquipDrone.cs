@@ -16,43 +16,63 @@ namespace MinionMeld.Components
         {
             EquipmentSlot.onServerEquipmentActivated += ActivateAllEquipment;
             IL.RoR2.CharacterBody.OnInventoryChanged += CharacterBody_OnInventoryChanged;
-            On.RoR2.EquipmentSlot.Update += EquipmentSlot_Update;
             On.RoR2.Inventory.SetEquipment += Inventory_SetEquipment;
         }
 
         private static void Inventory_SetEquipment(On.RoR2.Inventory.orig_SetEquipment orig, Inventory self, EquipmentState equipmentState, uint slot)
         {
-            if (NetworkServer.active && self.GetItemCount(MinionMeldPlugin.meldStackItem) > 0)
+            // ignore if we arent overwriting a non-minion equip or if the minion equip is empty or if the new state is nothing
+            if (!NetworkServer.active || self.GetItemCount(MinionMeldPlugin.meldStackItem) <= 0 || equipmentState.equipmentIndex == EquipmentIndex.None || self.GetEquipment(slot).equipmentIndex == EquipmentIndex.None)
             {
-                var state = self.GetEquipment(slot);
-                if (state.equipmentIndex != EquipmentIndex.None && equipmentState.equipmentIndex != EquipmentIndex.None && state.equipmentIndex != equipmentState.equipmentIndex)
-                {
-                    for (uint i = (uint)self.equipmentStateSlots.Length; i > slot; i--)
-                    {
-                        state = self.GetEquipment(i - 1);
-                        if (self.SetEquipmentInternal(state, i))
-                        {
-                            if (NetworkServer.active)
-                            {
-                                self.SetDirtyBit(16u);
-                            }
+                orig(self, equipmentState, slot);
+                return;
+            }
 
-                            self.HandleInventoryChanged();
-                            if (self.spawnedOverNetwork)
-                            {
-                                self.CallRpcClientEquipmentChanged(state.equipmentIndex, i);
-                            }
-                        }
+            // ignore if we already have it. nobody will know.
+            for (uint i = 0; i < self.equipmentStateSlots.Length; i++)
+            {
+                if (self.equipmentStateSlots[i].equipmentIndex == equipmentState.equipmentIndex)
+                {
+                    orig(self, equipmentState, i);
+                    return;
+                }
+            }
+
+            // move that gear up
+            for (uint i = (uint)self.equipmentStateSlots.Length; i > slot; i--)
+            {
+                var state = self.GetEquipment(i - 1);
+                if (self.SetEquipmentInternal(state, i))
+                {
+                    self.SetDirtyBit(16u);
+
+                    self.HandleInventoryChanged();
+                    if (self.spawnedOverNetwork)
+                    {
+                        self.CallRpcClientEquipmentChanged(state.equipmentIndex, i);
                     }
                 }
             }
 
+            // let orig set the new state like normal
             orig(self, equipmentState, slot);
+
+            // set the active equipment to the lowest cooldown cuz why not its for equipment drones only essentially idk
+            if (self.activeEquipmentSlot != slot)
+            {
+                var newDef = self.GetEquipment(slot).equipmentDef;
+                if (newDef && newDef.cooldown > 0)
+                {
+                    var currentDef = self.currentEquipmentState.equipmentDef;
+                    if (!currentDef || currentDef.cooldown <= 0 || newDef.cooldown < currentDef.cooldown)
+                        self.SetActiveEquipmentSlot((byte)slot);
+                }
+            }
         }
 
         private static void ActivateAllEquipment(EquipmentSlot self, EquipmentIndex equipmentIndex)
 		{
-            if (self.stock > 0)
+            if (!NetworkServer.active)
                 return;
 
             var inventory = self.characterBody ? self.characterBody.inventory : null;	
@@ -63,23 +83,17 @@ namespace MinionMeld.Components
             if (slots <= 1)
                 return;
 
-            var index = inventory.activeEquipmentSlot;
-		    var lowestCooldown = float.PositiveInfinity;
 			for (uint i = 0; i < slots; i++)
 			{
-				var state = inventory.GetEquipment(i);
-				if (i != inventory.activeEquipmentSlot && state.equipmentIndex != EquipmentIndex.None)
-				{
-					var equipmentDef = EquipmentCatalog.GetEquipmentDef(state.equipmentIndex);
-					if(equipmentDef.cooldown > 0 && self.PerformEquipmentAction(equipmentDef) &&  equipmentDef.cooldown < lowestCooldown)
+                if (i != inventory.activeEquipmentSlot)
+                {
+                    var equipmentDef = EquipmentCatalog.GetEquipmentDef(inventory.GetEquipment(i).equipmentIndex);
+                    if (equipmentDef && equipmentDef.cooldown > 0)
                     {
-						lowestCooldown = equipmentDef.cooldown;
-                        index = (byte)i;
+                        self.PerformEquipmentAction(equipmentDef);
                     }
-				}
+                }
 			}
-            if (index != inventory.activeEquipmentSlot)
-                inventory.SetActiveEquipmentSlot(index);
 		}
 
 
@@ -112,32 +126,8 @@ namespace MinionMeld.Components
 			}
 			else
 			{
-				Log.Warning("CompositeInjector.CharacterBody_OnEquipmentLost: ILHook failed.");
+				Log.Error("MinionMeld.CharacterBody_OnInventoryChanged: ILHook failed.");
 			}
-
 		}
-
-		// display indicator of the first equipment that uses one
-		// would be cool to get all the indicators but it would be very annoying to do
-		private void EquipmentSlot_Update(On.RoR2.EquipmentSlot.orig_Update orig, EquipmentSlot self)
-		{
-			orig(self);
-
-            if (self.inventory?.GetItemCount(MinionMeldPlugin.meldStackItem) > 0 && self.targetIndicator != null)
-            {
-				self.targetIndicator.active = false;
-                for (uint i = 0; i < self.inventory.GetEquipmentSlotCount(); i++)
-                {
-					var state = self.inventory.GetEquipment(i);
-					if (state.equipmentIndex != self.equipmentIndex)
-					{
-						self.UpdateTargets(state.equipmentIndex, self.stock > 0);
-					}
-
-					if (self.targetIndicator.active)
-                        break; // use the indicator of the first equipment that uses one			
-                }
-            }
-        }
     }
 }

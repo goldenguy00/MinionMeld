@@ -19,7 +19,7 @@ namespace MinionMeld.Modules
             On.RoR2.CharacterMaster.Respawn += CharacterMaster_Respawn;
 
             // events
-            On.RoR2.HalcyoniteShrineInteractable.TrackInteractions += HalcyoniteShrineInteractable_TrackInteractions;
+            On.RoR2.HalcyoniteShrineInteractable.DrainConditionMet += HalcyoniteShrineInteractable_DrainConditionMet;
             On.RoR2.HoldoutZoneController.OnEnable += HoldoutZoneController_OnEnable;
             On.RoR2.ScriptedCombatEncounter.BeginEncounter += ScriptedCombatEncounter_BeginEncounter;
         }
@@ -33,7 +33,7 @@ namespace MinionMeld.Modules
             return body;
         }
 
-        private static void HalcyoniteShrineInteractable_TrackInteractions(On.RoR2.HalcyoniteShrineInteractable.orig_TrackInteractions orig, HalcyoniteShrineInteractable self)
+        private static void HalcyoniteShrineInteractable_DrainConditionMet(On.RoR2.HalcyoniteShrineInteractable.orig_DrainConditionMet orig, HalcyoniteShrineInteractable self)
         {
             orig(self);
 
@@ -47,7 +47,7 @@ namespace MinionMeld.Modules
         }
 
 
-        private void HoldoutZoneController_OnEnable(On.RoR2.HoldoutZoneController.orig_OnEnable orig, HoldoutZoneController self)
+        private static void HoldoutZoneController_OnEnable(On.RoR2.HoldoutZoneController.orig_OnEnable orig, HoldoutZoneController self)
         {
             orig(self);
 
@@ -60,7 +60,7 @@ namespace MinionMeld.Modules
             }
         }
 
-        private void ScriptedCombatEncounter_BeginEncounter(On.RoR2.ScriptedCombatEncounter.orig_BeginEncounter orig, ScriptedCombatEncounter self)
+        private static void ScriptedCombatEncounter_BeginEncounter(On.RoR2.ScriptedCombatEncounter.orig_BeginEncounter orig, ScriptedCombatEncounter self)
         {
             orig(self);
 
@@ -72,15 +72,18 @@ namespace MinionMeld.Modules
                 }
             }
         }
-        private void DeathState_OnImpactServer(On.EntityStates.Drone.DeathState.orig_OnImpactServer orig, EntityStates.Drone.DeathState self, Vector3 contactPoint)
+        private static void DeathState_OnImpactServer(On.EntityStates.Drone.DeathState.orig_OnImpactServer orig, EntityStates.Drone.DeathState self, Vector3 contactPoint)
         {
-            var num = 0;
-            if (self.characterBody && self.characterBody.master && self.characterBody.master.inventory)
-                num = self.characterBody.master.inventory.GetItemCount(MinionMeldPlugin.meldStackItem);
-
             orig(self, contactPoint);
-            for (var i = 0; i < num; i++)
-                orig(self, contactPoint);
+
+            var master = self.characterBody ? self.characterBody.master : null;
+            if (master && master.inventory)
+            {
+                var stacks = master.inventory.GetItemCount(MinionMeldPlugin.meldStackItem);
+
+                for (var i = 0; i < stacks; i++)
+                    orig(self, contactPoint);
+            }
         }
 
     }

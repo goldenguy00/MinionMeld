@@ -23,7 +23,7 @@ namespace MinionMeld
         public const string PluginGUID = $"com.{PluginAuthor}.{PluginName}";
         public const string PluginAuthor = "score";
         public const string PluginName = "MinionMeld";
-        public const string PluginVersion = "1.1.1";
+        public const string PluginVersion = "1.1.4";
 
         public static bool RooInstalled => Chainloader.PluginInfos.ContainsKey("com.rune580.riskofoptions");
 
