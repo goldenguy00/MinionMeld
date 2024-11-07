@@ -8,6 +8,14 @@ namespace MinionMeld
 {
     public static class PluginConfig
     {
+
+        public const string permaBlackList = "DevotedLemurianMaster,DevotedLemurianBruiserMaster,NemMercCloneMaster,";
+
+        public static HashSet<MasterCatalog.MasterIndex> MasterBlacklist { get; } = [];
+        public static HashSet<MasterCatalog.MasterIndex> TurretBlacklist { get; } = [];
+        public static HashSet<MasterCatalog.MasterIndex> MasterWhitelist { get; } = [];
+        public static HashSet<MasterCatalog.MasterIndex> TurretWhitelist { get; } = [];
+
         public static ConfigFile myConfig;
 
         // general
@@ -27,44 +35,42 @@ namespace MinionMeld
         public static ConfigEntry<int> vfxResize;
 
         //  blacklist
-        public static ConfigEntry<string> blacklistOption;
-        public static ConfigEntry<string> blacklistOption2;
+        public static ConfigEntry<string> blacklistMasters;
+        public static ConfigEntry<string> blacklistTurrets;
         public static ConfigEntry<bool> printMasterNames;
-        public static readonly HashSet<MasterCatalog.MasterIndex> masterBlacklist = [];
-        public static readonly HashSet<MasterCatalog.MasterIndex> turretBlacklist = [];
-        public const string permaBlackList = "DevotedLemurianMaster,DevotedLemurianBruiserMaster,NemMercCloneMaster,";
+
+        // whitelist
+        public static ConfigEntry<bool> useWhitelist;
+        public static ConfigEntry<string> whitelistMasters;
+        public static ConfigEntry<string> whitelistTurrets;
 
         private static void RebuildBlacklist(HashSet<MasterCatalog.MasterIndex> list, string option)
         {
             list.Clear();
-            if (!string.IsNullOrWhiteSpace(option))
+            if (!string.IsNullOrEmpty(option?.Replace(" ", string.Empty)))
             {
                 var split = option.Split(',');
                 for (var i = 0; i < split.Length; i++)
-                    if (!string.IsNullOrWhiteSpace(split[i]))
+                {
+                    if (!string.IsNullOrEmpty(split[i]))
                     {
-                        var name = split[i].Replace(" ", string.Empty).Replace("(Clone)", string.Empty);
+                        var name = split[i].Replace("(Clone)", string.Empty);
                         var idx = MasterCatalog.FindMasterIndex(name);
+
                         if (idx == MasterCatalog.MasterIndex.none)
                             idx = MasterCatalog.FindMasterIndex(name + "Master");
 
                         if (idx != MasterCatalog.MasterIndex.none)
                             list.Add(idx);
                     }
+                }
             }
         }
 
         public static void Init(ConfigFile cfg)
         {
-            string GENERAL = "General", STATS = "Stats", LIST = "BlackList";
+            string GENERAL = "General", STATS = "Stats", LIST = "BlackList", LIST2 = "WhiteList";
             myConfig = cfg;
-
-            BindOption(GENERAL,
-                "!!INFO!!",
-                true,
-                "The MinionMeld v1.1.0 patch fixed some issues with the plugin metadata using the wrong name." +
-                "\r\n\t- --**This causes the config file to get reset**-- but it won't delete the old one." +
-                "\r\n\t- The old cfg file is called DroneMeld, and new file is called MinionMeld if you have settings you'd like to transfer.");
 
             perPlayer = BindOption(GENERAL,
                 "Limit Drones Per Player",
@@ -134,13 +140,13 @@ namespace MinionMeld
                 "Visual size increase per meld, in percent. Stacks additively.",
                 0, 200);
 
-            blacklistOption = BindOption(LIST,
+            blacklistMasters = BindOption(LIST,
                 "Blacklist",
                 "EngiTurretMaster,EngiWalkerTurretMaster,GhoulMaster,TombstoneMaster",
                 "Put the broken shit in here, or just things you want duplicates of. For Devotion Artifact, download LemurFusion.\r\n" +
                 "To find these, download the DebugToolKit mod, open the console (Ctrl Alt ~), then type list_ai or enable the print option below.");
 
-            blacklistOption2 = BindOption(LIST,
+            blacklistTurrets = BindOption(LIST,
                 "Blacklist Teleporting Turret", "",
                 "Makes teleporting turret component unable to be applied to these guys. Typically applied to characters without the ability to move on their own.");
 
@@ -149,15 +155,38 @@ namespace MinionMeld
                 true,
                 "Prints the name to the console (Ctrl Alt ~) when preforming a successful meld. Helpful for setting up the blacklist.");
 
-            On.RoR2.MasterCatalog.Init += (orig) =>
-            {
-                orig();
 
-                RebuildBlacklist(masterBlacklist, permaBlackList + blacklistOption.Value);
-                blacklistOption.SettingChanged += (_, _) => RebuildBlacklist(masterBlacklist, permaBlackList + blacklistOption.Value);
-                RebuildBlacklist(turretBlacklist, blacklistOption2.Value);
-                blacklistOption2.SettingChanged += (_, _) => RebuildBlacklist(turretBlacklist, blacklistOption2.Value);
-            };
+            useWhitelist = BindOption(LIST2,
+                "Use Whitelist",
+                false,
+                "Use a custom whitelist of allowed CharacterMaster names instead of the default blacklist.");
+
+            whitelistMasters = BindOption(LIST2,
+                "Whitelist",
+                "",
+                "CharacterMaster names that should be allowed to meld. Teleporting turrets will not be affected by this list.");
+
+            whitelistTurrets = BindOption(LIST2,
+                "Whitelist Teleporting Turret",
+                "",
+                "CharacterMaster names of the immobile turret-like allies that should teleport around with you during combat events.");
+
+            On.RoR2.MasterCatalog.Init += MasterCatalog_Init;
+        }
+
+        private static void MasterCatalog_Init(On.RoR2.MasterCatalog.orig_Init orig)
+        {
+            orig();
+
+            RebuildBlacklist(MasterBlacklist, permaBlackList + blacklistMasters.Value);
+            blacklistMasters.SettingChanged += (_, _) => RebuildBlacklist(MasterBlacklist, permaBlackList + blacklistMasters.Value);
+            RebuildBlacklist(TurretBlacklist, blacklistTurrets.Value);
+            blacklistTurrets.SettingChanged += (_, _) => RebuildBlacklist(TurretBlacklist, blacklistTurrets.Value);
+
+            RebuildBlacklist(MasterWhitelist, whitelistMasters.Value);
+            whitelistMasters.SettingChanged += (_, _) => RebuildBlacklist(MasterWhitelist, whitelistMasters.Value);
+            RebuildBlacklist(TurretWhitelist, whitelistTurrets.Value);
+            whitelistTurrets.SettingChanged += (_, _) => RebuildBlacklist(TurretWhitelist, whitelistTurrets.Value);
         }
 
 

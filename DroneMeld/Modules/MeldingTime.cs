@@ -95,15 +95,26 @@ namespace MinionMeld.Modules
 
         public static bool CanApply(MasterCatalog.MasterIndex masterIdx, TeamIndex summonerTeam, TeamIndex? teamIndexOverride)
         {
-            return masterIdx != MasterCatalog.MasterIndex.none && (teamIndexOverride.HasValue ? teamIndexOverride.Value : summonerTeam) == TeamIndex.Player && !PluginConfig.masterBlacklist.Contains(masterIdx);
+            if (masterIdx != MasterCatalog.MasterIndex.none && (teamIndexOverride.HasValue ? teamIndexOverride.Value : summonerTeam) == TeamIndex.Player)
+            {
+                if (PluginConfig.useWhitelist.Value)
+                    return PluginConfig.MasterWhitelist.Contains(masterIdx);
+                return !PluginConfig.MasterBlacklist.Contains(masterIdx);
+            }
+
+            return false;
         }
 
         public static bool CanApplyTurret(CharacterMaster master)
         {
-            if (!PluginConfig.teleturret.Value || !master || master.teamIndex != TeamIndex.Player || master.masterIndex == MasterCatalog.MasterIndex.none)
-                return false;
+            if (PluginConfig.teleturret.Value && master && master.teamIndex == TeamIndex.Player && master.masterIndex != MasterCatalog.MasterIndex.none)
+            {
+                if (PluginConfig.useWhitelist.Value)
+                    return PluginConfig.TurretWhitelist.Contains(master.masterIndex);
+                return !PluginConfig.MasterBlacklist.Contains(master.masterIndex) && !PluginConfig.TurretBlacklist.Contains(master.masterIndex);
+            }
 
-            return !PluginConfig.masterBlacklist.Contains(master.masterIndex) && !PluginConfig.turretBlacklist.Contains(master.masterIndex);
+            return false;
         }
 
         public static bool PerformMeld(MasterCatalog.MasterIndex masterIdx, CharacterMaster summonerMaster, out CharacterMaster newSummon)
