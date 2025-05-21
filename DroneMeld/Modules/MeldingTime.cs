@@ -18,10 +18,48 @@ namespace MinionMeld.Modules
         }
 
         #region Apply
+        public static void HandleInventory(DirectorSpawnRequest spawnReq, Inventory inventory, SpawnCard.SpawnResult result)
+        {
+            var stacks = inventory.GetItemCount(MinionMeldPlugin.meldStackIndex);
+
+            // sneaky
+            inventory.itemAcquisitionOrder.Clear();
+            inventory.itemStacks = ItemCatalog.RequestItemStackArray();
+            inventory.itemAcquisitionOrder.Add(MinionMeldPlugin.meldStackIndex);
+            inventory.itemStacks[(int)MinionMeldPlugin.meldStackIndex] = stacks;
+
+            spawnReq.onSpawnedServer?.Invoke(result);
+
+            var newStacks = inventory.GetItemCount(MinionMeldPlugin.meldStackIndex);
+            inventory.GiveItem(MinionMeldPlugin.meldStackIndex, stacks - newStacks);
+        }
+        public static void HandleInventory(MasterSummon self, CharacterMaster newSummon, Inventory inventory)
+        {
+            var stacks = inventory.GetItemCount(MinionMeldPlugin.meldStackIndex);
+
+            if (self.inventoryToCopy)
+            {
+                inventory.CopyItemsFrom(self.inventoryToCopy, self.inventoryItemCopyFilter ?? Inventory.defaultItemCopyFilterDelegate);
+            }
+            else
+            {
+                inventory.itemAcquisitionOrder.Clear();
+                inventory.itemStacks = ItemCatalog.RequestItemStackArray();
+                inventory.itemAcquisitionOrder.Add(MinionMeldPlugin.meldStackIndex);
+                inventory.itemStacks[(int)MinionMeldPlugin.meldStackIndex] = stacks;
+            }
+
+            self.inventorySetupCallback?.SetupSummonedInventory(self, inventory);
+            self.preSpawnSetupCallback?.Invoke(newSummon);
+
+            var newStacks = inventory.GetItemCount(MinionMeldPlugin.meldStackIndex);
+            inventory.GiveItem(MinionMeldPlugin.meldStackIndex, stacks - newStacks);
+        }
         public static CharacterMaster ApplyPerPlayer(MasterCatalog.MasterIndex masterIdx, CharacterMaster summonerMaster)
         {
             List<CharacterMaster> validTargets = [];
             var priority = PluginConfig.priorityOrder.Value;
+
             var summonerId = summonerMaster.netId;
             if (summonerMaster.minionOwnership.ownerMaster)
                 summonerId = summonerMaster.minionOwnership.ownerMaster.netId;
@@ -35,7 +73,7 @@ namespace MinionMeld.Modules
                         continue;
 
                     var master = member.GetComponent<CharacterMaster>();
-                    if (master && master.inventory && master.masterIndex == masterIdx)
+                    if (master && master.inventory && master.masterIndex == masterIdx && !master.IsDeadAndOutOfLivesServer())
                     {
                         if (priority == DronemeldPriorityOrder.FirstOnly)
                             return master;
@@ -50,7 +88,7 @@ namespace MinionMeld.Modules
             {
                 return priority switch
                 {
-                    DronemeldPriorityOrder.RoundRobin => validTargets.OrderBy(m => m.inventory.GetItemCount(MinionMeldPlugin.meldStackItem)).FirstOrDefault(),
+                    DronemeldPriorityOrder.RoundRobin => validTargets.OrderBy(m => m.inventory.GetItemCount(MinionMeldPlugin.meldStackIndex)).FirstOrDefault(),
                     DronemeldPriorityOrder.Random => validTargets.ElementAtOrDefault(Random.Range(0, validTargets.Count)),
                     _ => null
                 };
@@ -70,7 +108,7 @@ namespace MinionMeld.Modules
                     continue;
 
                 var master = member.body.master;
-                if (master && master.inventory && master.masterIndex == masterIdx)
+                if (master && master.inventory && master.masterIndex == masterIdx && !master.IsDeadAndOutOfLivesServer())
                 {
                     if (priority == DronemeldPriorityOrder.FirstOnly)
                         return master;
@@ -84,7 +122,7 @@ namespace MinionMeld.Modules
             {
                 return priority switch
                 {
-                    DronemeldPriorityOrder.RoundRobin => validTargets.OrderBy(m => m.inventory.GetItemCount(MinionMeldPlugin.meldStackItem)).FirstOrDefault(),
+                    DronemeldPriorityOrder.RoundRobin => validTargets.OrderBy(m => m.inventory.GetItemCount(MinionMeldPlugin.meldStackIndex)).FirstOrDefault(),
                     DronemeldPriorityOrder.Random => validTargets.ElementAtOrDefault(Random.Range(0, validTargets.Count)),
                     _ => null
                 };
@@ -107,7 +145,7 @@ namespace MinionMeld.Modules
 
         public static bool CanApplyTurret(CharacterMaster master)
         {
-            if (PluginConfig.teleturret.Value && master && master.teamIndex == TeamIndex.Player && master.masterIndex != MasterCatalog.MasterIndex.none)
+            if (PluginConfig.teleturret.Value && master.teamIndex == TeamIndex.Player && master.masterIndex != MasterCatalog.MasterIndex.none)
             {
                 if (PluginConfig.useWhitelist.Value)
                     return PluginConfig.TurretWhitelist.Contains(master.masterIndex);
@@ -123,7 +161,7 @@ namespace MinionMeld.Modules
 
             if (newSummon)
             {
-                newSummon.inventory.GiveItem(MinionMeldPlugin.meldStackItem);
+                newSummon.inventory.GiveItem(MinionMeldPlugin.meldStackIndex);
 
                 if (newSummon.TryGetComponent<MasterSuicideOnTimer>(out var component))
                 {
@@ -139,7 +177,7 @@ namespace MinionMeld.Modules
                     {
                         newSummon.gameObject.AddComponent<TimedMeldStack>().Activate(itemCount * body.healthComponent.combinedHealthFraction);
 
-                        var stacks = 1 + newSummon.inventory.GetItemCount(MinionMeldPlugin.meldStackItem);
+                        var stacks = 1 + newSummon.inventory.GetItemCount(MinionMeldPlugin.meldStackIndex);
                         body.healthComponent.HealFraction(1f / stacks, default);
                     }
                 }
@@ -150,6 +188,22 @@ namespace MinionMeld.Modules
         #endregion
 
         #region TeleTurret
+        public static void InitMinion(CharacterMaster newSummon)
+        {
+            var body = newSummon.GetBody();
+            if (body)
+            {
+                if (PluginConfig.disableTeamCollision.Value)
+                {
+                    body.gameObject.layer = LayerIndex.fakeActor.intVal;
+                    if (body.characterMotor)
+                        body.characterMotor.Motor.RebuildCollidableLayers();
+                }
+
+                if (MeldingTime.CanApplyTurret(newSummon))
+                    MeldingTime.TryAddTeleTurret(body);
+            }
+        }
         public static void TryAddTeleTurret(CharacterBody body)
         {
             if (PluginConfig.teleturret.Value && body && !body.GetComponent<TeleportingTurret>())

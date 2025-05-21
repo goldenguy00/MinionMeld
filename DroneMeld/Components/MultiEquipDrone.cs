@@ -22,7 +22,7 @@ namespace MinionMeld.Components
         private static void Inventory_SetEquipment(On.RoR2.Inventory.orig_SetEquipment orig, Inventory self, EquipmentState equipmentState, uint slot)
         {
             // ignore if we arent overwriting a non-minion equip or if the minion equip is empty or if the new state is nothing
-            if (!NetworkServer.active || self.GetItemCount(MinionMeldPlugin.meldStackItem) <= 0 || equipmentState.equipmentIndex == EquipmentIndex.None || self.GetEquipment(slot).equipmentIndex == EquipmentIndex.None)
+            if (!NetworkServer.active || self.GetItemCount(MinionMeldPlugin.meldStackIndex) <= 0 || equipmentState.equipmentIndex == EquipmentIndex.None || self.GetEquipment(slot).equipmentIndex == EquipmentIndex.None)
             {
                 orig(self, equipmentState, slot);
                 return;
@@ -76,7 +76,7 @@ namespace MinionMeld.Components
                 return;
 
             var inventory = self.characterBody ? self.characterBody.inventory : null;	
-			if (!inventory || inventory.GetItemCount(MinionMeldPlugin.meldStackItem) <= 0) 
+			if (!inventory || inventory.GetItemCount(MinionMeldPlugin.meldStackIndex) <= 0) 
                 return;
 
             var slots = inventory.GetEquipmentSlotCount();
@@ -111,7 +111,7 @@ namespace MinionMeld.Components
 				c.Emit(OpCodes.Ldarg_0); //body
 				c.EmitDelegate<Action<CharacterBody>>((body) =>
 				{
-                    if (body.inventory.GetItemCount(MinionMeldPlugin.meldStackItem) > 0)
+                    if (body.inventory.GetItemCount(MinionMeldPlugin.meldStackIndex) > 0)
                     {
                         for (uint i = 0; i < body.inventory.GetEquipmentSlotCount(); i++)
                         {

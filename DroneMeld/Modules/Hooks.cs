@@ -1,8 +1,12 @@
-﻿using MinionMeld.Components;
+﻿using System.Linq;
+using MinionMeld.Components;
 using R2API;
 using RoR2;
+using RoR2.Projectile;
 using UnityEngine;
+using UnityEngine.Diagnostics;
 using UnityEngine.Networking;
+using static RoR2.FriendlyFireManager;
 
 namespace MinionMeld.Modules
 {
@@ -26,6 +30,49 @@ namespace MinionMeld.Modules
 
             On.RoR2.MasterSummon.Perform += MasterSummon_Perform;
             On.RoR2.DirectorCore.TrySpawnObject += DirectorCore_TrySpawnObject;
+
+            if (PluginConfig.disableProjectileCollision.Value)
+            {
+                On.RoR2.BulletAttack.DefaultFilterCallbackImplementation += BulletAttack_DefaultFilterCallbackImplementation;
+                On.RoR2.Projectile.ProjectileController.IgnoreCollisionsWithOwner += ProjectileController_IgnoreCollisionsWithOwner;
+            }
+        }
+
+        private static bool BulletAttack_DefaultFilterCallbackImplementation(On.RoR2.BulletAttack.orig_DefaultFilterCallbackImplementation orig, BulletAttack bulletAttack, ref BulletAttack.BulletHit hitInfo)
+        {
+            return orig(bulletAttack, ref hitInfo)
+                && !(hitInfo.hitHurtBox
+                && hitInfo.hitHurtBox.healthComponent
+                && bulletAttack.owner
+                && bulletAttack.owner.TryGetComponent<TeamComponent>(out var attackerTeamComponent)
+                && attackerTeamComponent.teamIndex == TeamIndex.Player
+                && !FriendlyFireManager.ShouldDirectHitProceed(hitInfo.hitHurtBox.healthComponent, attackerTeamComponent.teamIndex));
+        }
+
+        private static void ProjectileController_IgnoreCollisionsWithOwner(On.RoR2.Projectile.ProjectileController.orig_IgnoreCollisionsWithOwner orig, ProjectileController self, bool shouldIgnore)
+        {
+            orig(self, shouldIgnore);
+
+            if (!shouldIgnore || !PluginConfig.disableProjectileCollision.Value || FriendlyFireManager.friendlyFireMode != FriendlyFireMode.Off ||
+                self.teamFilter.teamIndex != TeamIndex.Player || self.myColliders.Length == 0 || !self.owner)
+            {
+                return;
+            }
+
+            foreach (var tc in TeamComponent.GetTeamMembers(TeamIndex.Player))
+            {
+                if (tc.gameObject != self.owner && tc.body && tc.body.hurtBoxGroup)
+                {
+                    var hurtBoxes = tc.body.hurtBoxGroup.hurtBoxes;
+                    for (int i = 0; i < hurtBoxes.Length; i++)
+                    {
+                        for (int j = 0; j < self.myColliders.Length; j++)
+                        {
+                            Physics.IgnoreCollision(hurtBoxes[i].collider, self.myColliders[j], true);
+                        } // end for
+                    } // end for
+                }
+            } // endforeach
         }
 
         private static CharacterMaster MasterSummon_Perform(On.RoR2.MasterSummon.orig_Perform orig, MasterSummon self)
@@ -43,21 +90,9 @@ namespace MinionMeld.Modules
                 if (PluginConfig.teleturret.Value && newSummon.hasBody && newSummon.bodyInstanceObject.TryGetComponent<TeleportingTurret>(out var teleTurret))
                     teleTurret.RegisterLocation(self.position);
                 else if (PluginConfig.respawnSummon.Value)
-                    TeleportHelper.TeleportBody(newSummon.GetBody(), self.position);
+                    TeleportHelper.TeleportBody(newSummon.GetBody(), self.position, false);
 
-                var stacks = newSummon.inventory.GetItemCount(MinionMeldPlugin.meldStackItem);
-                newSummon.inventory.CleanInventory();
-                newSummon.inventory.GiveItem(MinionMeldPlugin.meldStackItem, stacks);
-
-                if (self.inventoryToCopy)
-                    newSummon.inventory.CopyItemsFrom(self.inventoryToCopy, self.inventoryItemCopyFilter ?? Inventory.defaultItemCopyFilterDelegate);
-
-                self.inventorySetupCallback?.SetupSummonedInventory(self, newSummon.inventory);
-                self.preSpawnSetupCallback?.Invoke(newSummon);
-
-                var newStacks = newSummon.inventory.GetItemCount(MinionMeldPlugin.meldStackItem);
-                if (newStacks != stacks)
-                    newSummon.inventory.GiveItem(MinionMeldPlugin.meldStackItem, stacks - newStacks);
+                MeldingTime.HandleInventory(self, newSummon, newSummon.inventory);
 
                 if (PluginConfig.printMasterNames.Value)
                     Log.Info(string.Format(MELD_STRING, nameof(MasterSummon), newSummon.name));
@@ -70,8 +105,7 @@ namespace MinionMeld.Modules
 
             if (newSummon)
             {
-                if (MeldingTime.CanApplyTurret(newSummon))
-                    MeldingTime.TryAddTeleTurret(newSummon.GetBody());
+                MeldingTime.InitMinion(newSummon);
 
                 if (PluginConfig.printMasterNames.Value)
                     Log.Info(string.Format(SPAWN_STRING, nameof(MasterSummon), newSummon.name));
@@ -102,14 +136,10 @@ namespace MinionMeld.Modules
                         if (PluginConfig.teleturret.Value && newBody.TryGetComponent<TeleportingTurret>(out var teleTurret))
                             teleTurret.RegisterLocation(newPos.Value);
                         else if (PluginConfig.respawnSummon.Value)
-                            TeleportHelper.TeleportBody(newBody, newPos.Value);
+                            TeleportHelper.TeleportBody(newBody, newPos.Value, false);
                     }
 
-                    var stacks = newSummon.inventory.GetItemCount(MinionMeldPlugin.meldStackItem);
-                    newSummon.inventory.CleanInventory();
-                    newSummon.inventory.GiveItem(MinionMeldPlugin.meldStackItem, stacks);
-
-                    spawnReq.onSpawnedServer?.Invoke(new SpawnCard.SpawnResult
+                    MeldingTime.HandleInventory(spawnReq, newSummon.inventory, new SpawnCard.SpawnResult
                     {
                         spawnedInstance = newSummon.gameObject,
                         spawnRequest = spawnReq,
@@ -117,10 +147,6 @@ namespace MinionMeld.Modules
                         success = true,
                         rotation = newBody.transform.rotation
                     });
-
-                    var newStacks = newSummon.inventory.GetItemCount(MinionMeldPlugin.meldStackItem);
-                    if (newStacks != stacks)
-                        newSummon.inventory.GiveItem(MinionMeldPlugin.meldStackItem, stacks - newStacks);
                 }
 
                 if (PluginConfig.printMasterNames.Value)
@@ -132,11 +158,10 @@ namespace MinionMeld.Modules
             // first guy/dont meld yet but is valid target
             var newSummonObj = orig(self, spawnReq);
 
-            if (newSummonObj)
+            newSummon = newSummonObj ? newSummonObj.GetComponent<CharacterMaster>() : null;
+            if (newSummon)
             {
-                newSummon = newSummonObj.GetComponent<CharacterMaster>();
-                if (MeldingTime.CanApplyTurret(newSummon))
-                    MeldingTime.TryAddTeleTurret(newSummon.GetBody());
+                MeldingTime.InitMinion(newSummon);
 
                 if (PluginConfig.printMasterNames.Value)
                     Log.Info(string.Format(SPAWN_STRING, nameof(DirectorCore), newSummonObj.name));
@@ -149,7 +174,7 @@ namespace MinionMeld.Modules
         {
             if (PluginConfig.vfxResize.Value > 0 && NetworkClient.active && body && body.inventory)
             {
-                var itemCount = body.inventory.GetItemCount(MinionMeldPlugin.meldStackItem);
+                var itemCount = body.inventory.GetItemCount(MinionMeldPlugin.meldStackIndex);
                 if (itemCount > 0 && body.modelLocator && body.modelLocator.modelTransform)
                 {
                     var prefabBody = BodyCatalog.GetBodyPrefab(body.bodyIndex);
@@ -170,7 +195,7 @@ namespace MinionMeld.Modules
             var text = orig.Invoke(self);
             if (self.inventory)
             {
-                var itemCount = self.inventory.GetItemCount(MinionMeldPlugin.meldStackItem);
+                var itemCount = self.inventory.GetItemCount(MinionMeldPlugin.meldStackIndex);
                 if (itemCount > 0)
                     return $"{text} <style=cStack>x{itemCount + 1}</style>";
             }
@@ -181,7 +206,7 @@ namespace MinionMeld.Modules
         {
             if (sender && sender.master && sender.master.inventory)
             {
-                var itemCount = sender.master.inventory.GetItemCount(MinionMeldPlugin.meldStackItem);
+                var itemCount = sender.master.inventory.GetItemCount(MinionMeldPlugin.meldStackIndex);
                 if (itemCount > 0)
                 {
                     args.baseHealthAdd += (sender.baseMaxHealth + (sender.levelMaxHealth * sender.level)) * itemCount * PluginConfig.statMultHealth.Value * 0.01f;

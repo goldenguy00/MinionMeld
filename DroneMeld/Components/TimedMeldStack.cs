@@ -28,7 +28,7 @@ namespace MinionMeld.Components
             {
                 var cm = this.GetComponent<CharacterMaster>();
                 if (cm && cm.inventory)
-                    cm.inventory.RemoveItem(MinionMeldPlugin.meldStackItem);
+                    cm.inventory.RemoveItem(MinionMeldPlugin.meldStackIndex);
 
                 if (this.TryGetComponent<Deployable>(out var deployable))
                 {

@@ -1,5 +1,6 @@
 ﻿using System.Collections.Generic;
 using System.Runtime.CompilerServices;
+using System.Text.RegularExpressions;
 using BepInEx.Configuration;
 using MinionMeld.Modules;
 using RoR2;
@@ -8,16 +9,6 @@ namespace MinionMeld
 {
     public static class PluginConfig
     {
-
-        public const string permaBlackList = "DevotedLemurianMaster,DevotedLemurianBruiserMaster,NemMercCloneMaster,";
-
-        public static HashSet<MasterCatalog.MasterIndex> MasterBlacklist { get; } = [];
-        public static HashSet<MasterCatalog.MasterIndex> TurretBlacklist { get; } = [];
-        public static HashSet<MasterCatalog.MasterIndex> MasterWhitelist { get; } = [];
-        public static HashSet<MasterCatalog.MasterIndex> TurretWhitelist { get; } = [];
-
-        public static ConfigFile myConfig;
-
         // general
         public static ConfigEntry<bool> perPlayer;
         public static ConfigEntry<bool> teleturret;
@@ -26,6 +17,8 @@ namespace MinionMeld
         public static ConfigEntry<bool> enableTurretLeash;
         public static ConfigEntry<int> minionLeashRange;
         public static ConfigEntry<MeldingTime.DronemeldPriorityOrder> priorityOrder;
+        public static ConfigEntry<bool> disableTeamCollision;
+        public static ConfigEntry<bool> disableProjectileCollision;
 
         // stats
         public static ConfigEntry<int> statMultHealth;
@@ -44,17 +37,44 @@ namespace MinionMeld
         public static ConfigEntry<string> whitelistMasters;
         public static ConfigEntry<string> whitelistTurrets;
 
-        private static void RebuildBlacklist(HashSet<MasterCatalog.MasterIndex> list, string option)
+        public static readonly HashSet<MasterCatalog.MasterIndex> MasterBlacklist = [];
+        public static readonly HashSet<MasterCatalog.MasterIndex> TurretBlacklist = [];
+        public static readonly HashSet<MasterCatalog.MasterIndex> MasterWhitelist = [];
+        public static readonly HashSet<MasterCatalog.MasterIndex> TurretWhitelist = [];
+
+        private static readonly Regex StringFilter = new(@"\s", RegexOptions.Compiled);
+
+        [SystemInitializer([typeof(MasterCatalog)])]
+        private static void Init()
         {
-            list.Clear();
-            if (!string.IsNullOrEmpty(option?.Replace(" ", string.Empty)))
+            string permaBlackList = "DevotedLemurianMaster,DevotedLemurianBruiserMaster,NemMercCloneMaster,";
+
+            RebuildBlacklist(MasterBlacklist, permaBlackList + blacklistMasters.Value);
+            blacklistMasters.SettingChanged += (_, _) => RebuildBlacklist(MasterBlacklist, permaBlackList + blacklistMasters.Value);
+
+            RebuildBlacklist(TurretBlacklist, blacklistTurrets.Value);
+            blacklistTurrets.SettingChanged += (_, _) => RebuildBlacklist(TurretBlacklist, blacklistTurrets.Value);
+
+            RebuildBlacklist(MasterWhitelist, whitelistMasters.Value);
+            whitelistMasters.SettingChanged += (_, _) => RebuildBlacklist(MasterWhitelist, whitelistMasters.Value);
+
+            RebuildBlacklist(TurretWhitelist, whitelistTurrets.Value);
+            whitelistTurrets.SettingChanged += (_, _) => RebuildBlacklist(TurretWhitelist, whitelistTurrets.Value);
+
+            static void RebuildBlacklist(HashSet<MasterCatalog.MasterIndex> list, string option)
             {
-                var split = option.Split(',');
-                for (var i = 0; i < split.Length; i++)
+                list.Clear();
+
+                option = StringFilter.Replace(option, (match) => string.Empty);
+
+                if (string.IsNullOrEmpty(option))
+                    return;
+
+                foreach (var split in option.Split(','))
                 {
-                    if (!string.IsNullOrEmpty(split[i]))
+                    if (!string.IsNullOrEmpty(split))
                     {
-                        var name = split[i].Replace("(Clone)", string.Empty);
+                        var name = split.Replace("(Clone)", string.Empty);
                         var idx = MasterCatalog.FindMasterIndex(name);
 
                         if (idx == MasterCatalog.MasterIndex.none)
@@ -69,130 +89,126 @@ namespace MinionMeld
 
         public static void Init(ConfigFile cfg)
         {
-            string GENERAL = "General", STATS = "Stats", LIST = "BlackList", LIST2 = "WhiteList";
-            myConfig = cfg;
+            string GENERAL = "General",
+                STATS = "Stats",
+                LIST = "BlackList",
+                LIST2 = "WhiteList";
 
-            perPlayer = BindOption(GENERAL,
+            perPlayer = cfg.BindOption(GENERAL,
                 "Limit Drones Per Player",
                 true,
                 "If false, then the team's collective drones will be limited");
 
-            teleturret = BindOption(GENERAL,
+            teleturret = cfg.BindOption(GENERAL,
                 "Teleporting Turrets",
                 true,
                 "Turrets, Squids, etc (anything immobile) remember their previous spawn locations and follow when you start a scripted combat event (teleporter, mithrix etc)");
 
-            respawnSummon = BindOption(GENERAL,
+            respawnSummon = cfg.BindOption(GENERAL,
                 "Spawn In New Location",
                 true,
                 "Summoned allies will 'respawn' in the location that that they are summoned.");
 
-            maxDronesPerType = BindOptionSlider(GENERAL,
+            maxDronesPerType = cfg.BindOptionSlider(GENERAL,
                 "Max Minions Per Type",
                 1,
                 "Max Number of Minions you (or your team) can control of that type before melding is applied.",
                 1, 20);
 
-            enableTurretLeash = BindOption(GENERAL,
+            enableTurretLeash = cfg.BindOption(GENERAL,
                 "Enable Turret Leash",
                 true,
                 "Allows turrets to teleport to their owner when too far.");
 
-            minionLeashRange = BindOptionSlider(GENERAL,
+            minionLeashRange = cfg.BindOptionSlider(GENERAL,
                 "Minion Leash Range",
                 200,
                 "Max distance a minion should be from their owner before teleporting. Applies to turrets.",
                 50, 1000);
 
-            priorityOrder = BindOption(GENERAL,
+            priorityOrder = cfg.BindOption(GENERAL,
                 "Selection Priority",
                 MeldingTime.DronemeldPriorityOrder.RoundRobin,
                 "Used for deciding which drone should be selected for melding.");
 
+            disableTeamCollision = cfg.BindOption(GENERAL,
+                "Disable Minion Collision",
+                true,
+                "Allows you to walk through any minions.",
+                true);
+
+            disableProjectileCollision = cfg.BindOption(GENERAL,
+                "Disable Team Attack Collision",
+                false,
+                "Lightweight filter to allow all teammate bullets and projectiles to pass through allies. Should be disabled for certain characters to function correctly.",
+                true);
+
             // STATS
-            statMultHealth = BindOptionSlider(STATS,
+            statMultHealth = cfg.BindOptionSlider(STATS,
                 "Health Multiplier",
                 20,
                 "Stacks additively.",
                 0, 200);
 
-            statMultDamage = BindOptionSlider(STATS,
+            statMultDamage = cfg.BindOptionSlider(STATS,
                 "Damage Multiplier",
                 20,
                 "Stacks additively.",
                 0, 200);
 
-            statMultAttackSpeed = BindOptionSlider(STATS,
+            statMultAttackSpeed = cfg.BindOptionSlider(STATS,
                 "Attack Speed Multiplier",
                 20,
                 "Stacks additively.",
                 0, 200);
 
-            statMultCDR = BindOptionSlider(STATS,
+            statMultCDR = cfg.BindOptionSlider(STATS,
                 "Cooldown Reduction Multiplier",
                 20,
                 "Stacks additively.",
                 0, 200);
 
-            vfxResize = BindOptionSlider(STATS,
+            vfxResize = cfg.BindOptionSlider(STATS,
                 "Size Multiplier",
                 20,
                 "Visual size increase per meld, in percent. Stacks additively.",
                 0, 200);
 
-            blacklistMasters = BindOption(LIST,
+            blacklistMasters = cfg.BindOption(LIST,
                 "Blacklist",
                 "EngiTurretMaster,EngiWalkerTurretMaster,GhoulMaster,TombstoneMaster",
                 "Put the broken shit in here, or just things you want duplicates of. For Devotion Artifact, download LemurFusion.\r\n" +
                 "To find these, download the DebugToolKit mod, open the console (Ctrl Alt ~), then type list_ai or enable the print option below.");
 
-            blacklistTurrets = BindOption(LIST,
+            blacklistTurrets = cfg.BindOption(LIST,
                 "Blacklist Teleporting Turret", "",
                 "Makes teleporting turret component unable to be applied to these guys. Typically applied to characters without the ability to move on their own.");
 
-            printMasterNames = BindOption(LIST,
+            printMasterNames = cfg.BindOption(LIST,
                 "Print Master Names To Console",
                 true,
                 "Prints the name to the console (Ctrl Alt ~) when preforming a successful meld. Helpful for setting up the blacklist.");
 
 
-            useWhitelist = BindOption(LIST2,
+            useWhitelist = cfg.BindOption(LIST2,
                 "Use Whitelist",
                 false,
                 "Use a custom whitelist of allowed CharacterMaster names instead of the default blacklist.");
 
-            whitelistMasters = BindOption(LIST2,
+            whitelistMasters = cfg.BindOption(LIST2,
                 "Whitelist",
                 "",
                 "CharacterMaster names that should be allowed to meld. Teleporting turrets will not be affected by this list.");
 
-            whitelistTurrets = BindOption(LIST2,
+            whitelistTurrets = cfg.BindOption(LIST2,
                 "Whitelist Teleporting Turret",
                 "",
                 "CharacterMaster names of the immobile turret-like allies that should teleport around with you during combat events.");
-
-            On.RoR2.MasterCatalog.Init += MasterCatalog_Init;
         }
-
-        private static void MasterCatalog_Init(On.RoR2.MasterCatalog.orig_Init orig)
-        {
-            orig();
-
-            RebuildBlacklist(MasterBlacklist, permaBlackList + blacklistMasters.Value);
-            blacklistMasters.SettingChanged += (_, _) => RebuildBlacklist(MasterBlacklist, permaBlackList + blacklistMasters.Value);
-            RebuildBlacklist(TurretBlacklist, blacklistTurrets.Value);
-            blacklistTurrets.SettingChanged += (_, _) => RebuildBlacklist(TurretBlacklist, blacklistTurrets.Value);
-
-            RebuildBlacklist(MasterWhitelist, whitelistMasters.Value);
-            whitelistMasters.SettingChanged += (_, _) => RebuildBlacklist(MasterWhitelist, whitelistMasters.Value);
-            RebuildBlacklist(TurretWhitelist, whitelistTurrets.Value);
-            whitelistTurrets.SettingChanged += (_, _) => RebuildBlacklist(TurretWhitelist, whitelistTurrets.Value);
-        }
-
 
         #region Config Binding
         [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.NoOptimization)]
-        public static ConfigEntry<T> BindOption<T>(string section, string name, T defaultValue, string description = "", bool restartRequired = false)
+        internal static ConfigEntry<T> BindOption<T>(this ConfigFile cfg, string section, string name, T defaultValue, string description = "", bool restartRequired = false)
         {
             if (string.IsNullOrEmpty(description))
                 description = name;
@@ -200,7 +216,7 @@ namespace MinionMeld
             if (restartRequired)
                 description += " (restart required)";
 
-            var configEntry = myConfig.Bind(section, name, defaultValue, description);
+            var configEntry = cfg.Bind(section, name, defaultValue, description);
 
             if (MinionMeldPlugin.RooInstalled)
                 TryRegisterOption(configEntry, restartRequired);
@@ -209,7 +225,7 @@ namespace MinionMeld
         }
 
         [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.NoOptimization)]
-        public static ConfigEntry<T> BindOptionSlider<T>(string section, string name, T defaultValue, string description = "", float min = 0, float max = 20, bool restartRequired = false)
+        internal static ConfigEntry<T> BindOptionSlider<T>(this ConfigFile cfg, string section, string name, T defaultValue, string description = "", float min = 0, float max = 20, bool restartRequired = false)
         {
             if (string.IsNullOrEmpty(description))
                 description = name;
@@ -219,7 +235,7 @@ namespace MinionMeld
             if (restartRequired)
                 description += " (restart required)";
 
-            var configEntry = myConfig.Bind(section, name, defaultValue, description);
+            var configEntry = cfg.Bind(section, name, defaultValue, description);
 
             if (MinionMeldPlugin.RooInstalled)
                 TryRegisterOptionSlider(configEntry, min, max, restartRequired);
@@ -230,13 +246,13 @@ namespace MinionMeld
 
         #region RoO
         [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.NoOptimization)]
-        public static void InitRoO()
+        internal static void InitRoO()
         {
             RiskOfOptions.ModSettingsManager.SetModDescription("Devotion Artifact but better.");
         }
 
         [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.NoOptimization)]
-        public static void TryRegisterOption<T>(ConfigEntry<T> entry, bool restartRequired)
+        internal static void TryRegisterOption<T>(ConfigEntry<T> entry, bool restartRequired)
         {
             if (entry is ConfigEntry<string> stringEntry)
             {
@@ -277,7 +293,7 @@ namespace MinionMeld
         }
 
         [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.NoOptimization)]
-        public static void TryRegisterOptionSlider<T>(ConfigEntry<T> entry, float min, float max, bool restartRequired)
+        internal static void TryRegisterOptionSlider<T>(ConfigEntry<T> entry, float min, float max, bool restartRequired)
         {
             if (entry is ConfigEntry<int> intEntry)
             {
