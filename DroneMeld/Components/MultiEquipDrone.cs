@@ -16,58 +16,29 @@ namespace MinionMeld.Components
         {
             EquipmentSlot.onServerEquipmentActivated += ActivateAllEquipment;
             IL.RoR2.CharacterBody.OnInventoryChanged += CharacterBody_OnInventoryChanged;
-            On.RoR2.Inventory.SetEquipment += Inventory_SetEquipment;
+            On.RoR2.Inventory.SetEquipment_EquipmentState_uint_uint += Inventory_SetEquipment;
         }
 
-        private static void Inventory_SetEquipment(On.RoR2.Inventory.orig_SetEquipment orig, Inventory self, EquipmentState equipmentState, uint slot)
+        private static void Inventory_SetEquipment(On.RoR2.Inventory.orig_SetEquipment_EquipmentState_uint_uint orig, Inventory self, EquipmentState equipmentState, uint slot, uint set)
         {
             // ignore if we arent overwriting a non-minion equip or if the minion equip is empty or if the new state is nothing
-            if (!NetworkServer.active || self.GetItemCount(MinionMeldPlugin.meldStackIndex) <= 0 || equipmentState.equipmentIndex == EquipmentIndex.None || self.GetEquipment(slot).equipmentIndex == EquipmentIndex.None)
+            if (!NetworkServer.active || self.GetItemCountPermanent(MinionMeldPlugin.meldStackIndex) <= 0)
             {
-                orig(self, equipmentState, slot);
+                orig(self, equipmentState, slot, set);
                 return;
             }
 
-            // ignore if we already have it. nobody will know.
-            for (uint i = 0; i < self.equipmentStateSlots.Length; i++)
+            if (equipmentState.equipmentIndex == EquipmentIndex.None || self.GetEquipment(slot, set).equipmentIndex == EquipmentIndex.None || self.HasEquipment(equipmentState.equipmentIndex))
             {
-                if (self.equipmentStateSlots[i].equipmentIndex == equipmentState.equipmentIndex)
-                {
-                    orig(self, equipmentState, i);
-                    return;
-                }
+                orig(self, equipmentState, slot, set);
+                return;
             }
 
-            // move that gear up
-            for (uint i = (uint)self.equipmentStateSlots.Length; i > slot; i--)
-            {
-                var state = self.GetEquipment(i - 1);
-                if (self.SetEquipmentInternal(state, i))
-                {
-                    self.SetDirtyBit(16u);
-
-                    self.HandleInventoryChanged();
-                    if (self.spawnedOverNetwork)
-                    {
-                        self.CallRpcClientEquipmentChanged(state.equipmentIndex, i);
-                    }
-                }
-            }
-
+            self.AddEquipmentSet();
+            set = self.FindBestEquipmentSetIndex(false);
             // let orig set the new state like normal
-            orig(self, equipmentState, slot);
+            orig(self, equipmentState, slot, set);
 
-            // set the active equipment to the lowest cooldown cuz why not its for equipment drones only essentially idk
-            if (self.activeEquipmentSlot != slot)
-            {
-                var newDef = self.GetEquipment(slot).equipmentDef;
-                if (newDef && newDef.cooldown > 0)
-                {
-                    var currentDef = self.currentEquipmentState.equipmentDef;
-                    if (!currentDef || currentDef.cooldown <= 0 || newDef.cooldown < currentDef.cooldown)
-                        self.SetActiveEquipmentSlot((byte)slot);
-                }
-            }
         }
 
         private static void ActivateAllEquipment(EquipmentSlot self, EquipmentIndex equipmentIndex)
@@ -76,24 +47,23 @@ namespace MinionMeld.Components
                 return;
 
             var inventory = self.characterBody ? self.characterBody.inventory : null;	
-			if (!inventory || inventory.GetItemCount(MinionMeldPlugin.meldStackIndex) <= 0) 
+			if (!inventory || inventory.GetItemCountPermanent(MinionMeldPlugin.meldStackIndex) <= 0) 
                 return;
 
-            var slots = inventory.GetEquipmentSlotCount();
-            if (slots <= 1)
-                return;
-
-			for (uint i = 0; i < slots; i++)
-			{
-                if (i != inventory.activeEquipmentSlot)
+            for (uint i = 0; i < inventory.GetEquipmentSlotCount(); i++)
+            {
+                for (uint j = 0; j < inventory.GetEquipmentSetCount(i); j++)
                 {
-                    var equipmentDef = EquipmentCatalog.GetEquipmentDef(inventory.GetEquipment(i).equipmentIndex);
-                    if (equipmentDef && equipmentDef.cooldown > 0)
+                    if (i != inventory.activeEquipmentSlot && j != inventory.activeEquipmentSet[i])
                     {
-                        self.PerformEquipmentAction(equipmentDef);
+                        var equipmentDef = EquipmentCatalog.GetEquipmentDef(inventory.GetEquipment(i, j).equipmentIndex);
+                        if (equipmentDef && equipmentDef.cooldown > 0)
+                        {
+                            self.PerformEquipmentAction(equipmentDef);
+                        }
                     }
                 }
-			}
+            }
 		}
 
 
@@ -111,14 +81,17 @@ namespace MinionMeld.Components
 				c.Emit(OpCodes.Ldarg_0); //body
 				c.EmitDelegate<Action<CharacterBody>>((body) =>
 				{
-                    if (body.inventory.GetItemCount(MinionMeldPlugin.meldStackIndex) > 0)
+                    if (body.inventory.GetItemCountPermanent(MinionMeldPlugin.meldStackIndex) > 0)
                     {
                         for (uint i = 0; i < body.inventory.GetEquipmentSlotCount(); i++)
                         {
-                            var buffDef = body.inventory.GetEquipment(i).equipmentDef?.passiveBuffDef;
-                            if (buffDef && !body.HasBuff(buffDef))
+                            for (uint j = 0; j < body.inventory.GetEquipmentSetCount(i); j++)
                             {
-                                body.AddBuff(buffDef);
+                                var buffDef = body.inventory.GetEquipment(i, j).equipmentDef?.passiveBuffDef;
+                                if (buffDef && !body.HasBuff(buffDef))
+                                {
+                                    body.AddBuff(buffDef);
+                                }
                             }
                         }
                     }

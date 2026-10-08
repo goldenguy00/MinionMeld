@@ -19,7 +19,7 @@ namespace MinionMeld.Modules
             On.EntityStates.Drone.DeathState.OnImpactServer += DeathState_OnImpactServer;
 
             // give teleporting turret component
-            On.RoR2.CharacterMaster.Respawn += CharacterMaster_Respawn;
+            On.RoR2.CharacterMaster.Respawn_Vector3_Quaternion_bool += CharacterMaster_Respawn;
 
             // events
             On.RoR2.HalcyoniteShrineInteractable.TrackInteractions += HalcyoniteShrineInteractable_TrackInteractions;
@@ -59,7 +59,7 @@ namespace MinionMeld.Modules
             }
         }
 
-        private static CharacterBody CharacterMaster_Respawn(On.RoR2.CharacterMaster.orig_Respawn orig, CharacterMaster self, Vector3 footPosition, Quaternion rotation, bool wasRevivedMidStage)
+        private static CharacterBody CharacterMaster_Respawn(On.RoR2.CharacterMaster.orig_Respawn_Vector3_Quaternion_bool orig, CharacterMaster self, Vector3 footPosition, Quaternion rotation, bool wasRevivedMidStage)
         {
             var body = orig(self, footPosition, rotation, wasRevivedMidStage);
 
@@ -76,7 +76,7 @@ namespace MinionMeld.Modules
             var inventory = self.characterBody ? self.characterBody.inventory : null;
             if (inventory)
             {
-                var stacks = inventory.GetItemCount(MinionMeldPlugin.meldStackIndex);
+                var stacks = inventory.GetItemCountPermanent(MinionMeldPlugin.meldStackIndex);
 
                 for (var i = 1; i < stacks; i++)
                     orig(self, contactPoint);

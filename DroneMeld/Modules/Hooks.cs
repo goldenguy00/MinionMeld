@@ -174,7 +174,7 @@ namespace MinionMeld.Modules
         {
             if (PluginConfig.vfxResize.Value > 0 && NetworkClient.active && body && body.inventory)
             {
-                var itemCount = body.inventory.GetItemCount(MinionMeldPlugin.meldStackIndex);
+                var itemCount = body.inventory.GetItemCountPermanent(MinionMeldPlugin.meldStackIndex);
                 if (itemCount > 0 && body.modelLocator && body.modelLocator.modelTransform)
                 {
                     var prefabBody = BodyCatalog.GetBodyPrefab(body.bodyIndex);
@@ -195,7 +195,7 @@ namespace MinionMeld.Modules
             var text = orig.Invoke(self);
             if (self.inventory)
             {
-                var itemCount = self.inventory.GetItemCount(MinionMeldPlugin.meldStackIndex);
+                var itemCount = self.inventory.GetItemCountPermanent(MinionMeldPlugin.meldStackIndex);
                 if (itemCount > 0)
                     return $"{text} <style=cStack>x{itemCount + 1}</style>";
             }
@@ -206,13 +206,13 @@ namespace MinionMeld.Modules
         {
             if (sender && sender.master && sender.master.inventory)
             {
-                var itemCount = sender.master.inventory.GetItemCount(MinionMeldPlugin.meldStackIndex);
+                var itemCount = sender.master.inventory.GetItemCountPermanent(MinionMeldPlugin.meldStackIndex);
                 if (itemCount > 0)
                 {
                     args.baseHealthAdd += (sender.baseMaxHealth + (sender.levelMaxHealth * sender.level)) * itemCount * PluginConfig.statMultHealth.Value * 0.01f;
                     args.baseDamageAdd += (sender.baseDamage + (sender.levelDamage * sender.level)) * itemCount * PluginConfig.statMultDamage.Value * 0.01f;
                     args.baseAttackSpeedAdd += (sender.baseAttackSpeed + (sender.levelAttackSpeed * sender.level)) * itemCount * PluginConfig.statMultAttackSpeed.Value * 0.01f;
-                    args.cooldownMultAdd -= Util.ConvertAmplificationPercentageIntoReductionNormalized(itemCount * PluginConfig.statMultCDR.Value * 0.01f);
+                    args.allSkills.cooldownMultAdd -= Util.ConvertAmplificationPercentageIntoReductionNormalized(itemCount * PluginConfig.statMultCDR.Value * 0.01f);
                 }
             }
         }
